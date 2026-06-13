@@ -1,0 +1,37 @@
+# ============================================================
+# Render Blueprint — 一键部署后端到 Render.com
+#
+# 使用方法：
+#   1. 打开 https://render.com/deploy?repo=https://github.com/shiqianghua/wechat-chat
+#   2. 授权 GitHub 登录 → 自动读取本文件 → 点击 Deploy
+#   3. 获得固定域名，填入网页端顶部「后端地址」即可跨设备同步
+#
+# 免费计划说明：
+#   - 15 分钟无请求自动休眠，下次请求自动唤醒（约 30 秒）
+#   - 休眠期间数据保留，不会丢失
+#   - 重新部署代码时数据会重置（建议升级 Starter 获得持久磁盘）
+# ============================================================
+
+services:
+  - type: web
+    name: wechat-chat-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    region: singapore
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: FLASK_ENV
+        value: production
+
+    healthCheckPath: /api/health
+    # 免费计划不支持 disk，升级 Starter（$7/月）后可取消注释：
+    # disk:
+    #   name: data
+    #   mountPath: /opt/render/project/src/data
+    #   sizeGB: 1
