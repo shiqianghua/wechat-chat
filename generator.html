@@ -147,9 +147,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .shot-group-del:hover { color: #e74c3c; background: #fff5f5; }
 .shot-empty { font-size: 11px; color: #ccc; font-style: italic; }
 .shot-thumbs { display: flex; gap: 6px; flex-wrap: wrap; }
-.shot-thumb { width: 48px; height: 72px; object-fit: cover; border-radius: 4px; border: 2px solid transparent; cursor: pointer; transition: border-color 0.15s; }
+.shot-thumb-wrap { position: relative; display: inline-block; }
+.shot-thumb { width: 48px; height: 72px; object-fit: cover; border-radius: 4px; border: 2px solid transparent; cursor: pointer; transition: border-color 0.15s; display: block; }
 .shot-thumb:hover { border-color: #07c160; }
 .shot-thumb.thumb-sel { border-color: #07c160; box-shadow: 0 0 0 2px rgba(7,193,96,0.3); }
+.shot-thumb.dragging { opacity: 0.4; border-color: #ff9800; }
+.shot-thumb.drag-over { border-color: #ff9800; border-style: dashed; transform: scale(1.1); }
+.shot-thumb-delete { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; background: #e74c3c; color: #fff; border: none; border-radius: 50%; font-size: 11px; line-height: 18px; text-align: center; cursor: pointer; display: none; z-index: 2; }
+.shot-thumb-wrap:hover .shot-thumb-delete { display: block; }
+.shot-thumb-delete:hover { background: #c0392b; transform: scale(1.2); }
+.html-thumb { width: 48px; height: 72px; background: #fff9c4; border-radius: 4px; border: 2px solid #ffc107; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; }
+.html-thumb.thumb-sel { border-color: #07c160; box-shadow: 0 0 0 2px rgba(7,193,96,0.3); }
+.html-chat-content { font-family: -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; font-size: 14px; line-height: 1.6; }
+.html-chat-content .msg { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; max-width: 100%; }
+.html-chat-content .msg.left { justify-content: flex-start; }
+.html-chat-content .msg.right { flex-direction: row-reverse; }
+.html-chat-content .msg .avatar { width: 30px; height: 30px; border-radius: 4px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #fff; }
+.html-chat-content .msg .avatar.av-left { background: #ff7675; }
+.html-chat-content .msg .avatar.av-right { background: #4a90d9; }
+.html-chat-content .msg .bubble { max-width: 200px; padding: 6px 10px; border-radius: 4px; font-size: 14px; word-break: break-word; }
+.html-chat-content .msg.left .bubble { background: #fff; color: #000; border: 0.5px solid #e5e5e5; }
+.html-chat-content .msg.right .bubble { background: #95ec69; color: #000; }
+.html-chat-content .time { text-align: center; color: #b2b2b2; font-size: 11px; margin: 6px 0; }
+.html-chat-content .system { text-align: center; color: #b2b2b2; font-size: 11px; padding: 4px 10px; background: rgba(0,0,0,0.04); border-radius: 3px; margin: 4px auto; max-width: 200px; }
 .shot-viewport { width: 100%; flex: 1; overflow: hidden; position: relative; }
 .shot-img-scroll { width: 100%; display: block; position: relative; }
 .shot-marker { position: absolute; left: 0; right: 0; height: 2px; z-index: 5; pointer-events: none; }
@@ -220,6 +240,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
   <button class="tb-btn desktop-only" onclick="saveCurrentSession()" title="保存当前会话">保存</button>
   <button class="tb-btn" onclick="showNewSessionModal()">+ 新建</button>
   <button class="tb-btn danger" onclick="deleteCurrentSession()" title="删除当前会话">删除</button>
+  <span class="spacer"></span>
+  <input id="backendUrl" type="text" placeholder="后端地址(可选)" style="height:28px;width:180px;padding:0 8px;border:1px solid #ddd;border-radius:4px;font-size:12px;outline:none;" onchange="onBackendUrlChange()">
+  <button class="tb-btn" onclick="syncToBackend()" title="同步到后端服务器">同步</button>
   <span class="spacer"></span>
   <button class="tb-btn primary" onclick="exportPNG()">导出 PNG</button>
   <button class="tb-btn" onclick="exportSession()" title="导出会话">导出</button>
@@ -1072,6 +1095,47 @@ function initShotMode() {
   renderShotGroups();
 }
 
+// Upload image file to backend server, returns (err, url) via callback
+function uploadFileToBackend(file, callback) {
+  var formData = new FormData();
+  formData.append('file', file);
+  fetch(BACKEND_URL.replace(/\/$/, '') + '/api/upload/image', {
+    method: 'POST',
+    body: formData
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.ok && data.url) {
+      callback(null, data.url);
+    } else {
+      callback(data.error || 'Upload failed');
+    }
+  })
+  .catch(function(err) {
+    callback(err.message || 'Network error');
+  });
+}
+
+// Upload HTML content to backend server
+function uploadHtmlToBackend(htmlContent, name, callback) {
+  fetch(BACKEND_URL.replace(/\/$/, '') + '/api/upload/html', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: htmlContent, name: name || 'chat' })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.ok && data.url) {
+      callback(null, data.url);
+    } else {
+      callback(data.error || 'Upload failed');
+    }
+  })
+  .catch(function(err) {
+    callback(err.message || 'Network error');
+  });
+}
+
 function getGroupByName(name) {
   for (var i = 0; i < shotGroups.length; i++) {
     if (shotGroups[i].name === name) return shotGroups[i];
@@ -1088,20 +1152,56 @@ function uploadScreenshots(groupName) {
   var group = getGroupByName(groupName);
   if (!group) { toast("分组不存在"); return; }
   var input = document.createElement("input");
-  input.type = "file"; input.accept = "image/*"; input.multiple = true;
+  input.type = "file"; input.accept = "image/*,.html,.htm"; input.multiple = true;
   input.onchange = function() {
     var files = input.files;
     if (!files.length) return;
     var loaded = 0;
     for (var i = 0; i < files.length; i++) {
       (function(file) {
-        var reader = new FileReader();
-        reader.onload = function(e) {
-          group.images.push({ id: "img_" + Date.now() + "_" + Math.random().toString(36).slice(2,6), name: file.name, data: e.target.result });
-          loaded++;
-          if (loaded === files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 张到 " + groupName); }
-        };
-        reader.readAsDataURL(file);
+        var isHtml = /\.html?$/i.test(file.name);
+        if (isHtml) {
+          // Read HTML file as text
+          var htmlReader = new FileReader();
+          htmlReader.onload = function(e) {
+            group.images.push({
+              id: "html_" + Date.now() + "_" + Math.random().toString(36).slice(2,6),
+              name: file.name,
+              type: "html",
+              data: e.target.result
+            });
+            loaded++;
+            if (loaded === files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 个到 " + groupName); }
+          };
+          htmlReader.readAsText(file);
+        } else if (BACKEND_URL) {
+          // Upload image to backend server (permanent image hosting)
+          uploadFileToBackend(file, function(err, url) {
+            if (err) {
+              // Fallback: store as base64 locally
+              var fallbackReader = new FileReader();
+              fallbackReader.onload = function(ev) {
+                group.images.push({ id: "img_" + Date.now() + "_" + Math.random().toString(36).slice(2,6), name: file.name, type: "image", data: ev.target.result });
+                loaded++;
+                if (loaded === files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 个到 " + groupName + " (本地存储)"); }
+              };
+              fallbackReader.readAsDataURL(file);
+            } else {
+              group.images.push({ id: "img_" + Date.now() + "_" + Math.random().toString(36).slice(2,6), name: file.name, type: "image", data: url, isUrl: true });
+              loaded++;
+              if (loaded === files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 个到 " + groupName + " (已上传服务器)"); }
+            }
+          });
+        } else {
+          // No backend: store as base64
+          var reader = new FileReader();
+          reader.onload = function(e) {
+            group.images.push({ id: "img_" + Date.now() + "_" + Math.random().toString(36).slice(2,6), name: file.name, type: "image", data: e.target.result });
+            loaded++;
+            if (loaded === files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 张到 " + groupName); }
+          };
+          reader.readAsDataURL(file);
+        }
       })(files[i]);
     }
   };
@@ -1121,6 +1221,8 @@ function newShotGroup() {
 
 function setActiveGroup(name) {
   activeShotGroup = name;
+  // Persist active group
+  idbPut('config', 'activeShotGroup', name).catch(function(){});
   renderShotGroups();
 }
 
@@ -1134,6 +1236,139 @@ function deleteShotGroup(name) {
   fullRefresh();
 }
 
+// Delete individual image
+function deleteShotImage(id) {
+  if (!confirm("确定删除这张图片？")) return;
+  for (var g = 0; g < shotGroups.length; g++) {
+    var group = shotGroups[g];
+    for (var k = 0; k < group.images.length; k++) {
+      if (group.images[k].id === id) {
+        group.images.splice(k, 1);
+        if (shotCurrent === id) { shotCurrent = null; shotRevealIdx = 0; }
+        saveShotData();
+        renderShotGroups();
+        fullRefresh();
+        toast("已删除图片");
+        return;
+      }
+    }
+  }
+}
+
+// ========== Drag-to-Reorder ==========
+var _dragGroup = null;
+var _dragFromIdx = -1;
+
+function onShotDragStart(e) {
+  _dragGroup = e.target.closest('.shot-thumb-wrap').getAttribute('data-group');
+  _dragFromIdx = parseInt(e.target.closest('.shot-thumb-wrap').getAttribute('data-index'));
+  e.target.closest('.shot-thumb-wrap').querySelector('.shot-thumb').classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', _dragGroup + '|' + _dragFromIdx);
+}
+
+function onShotDragEnd(e) {
+  var thumb = e.target.closest('.shot-thumb-wrap');
+  if (thumb) thumb.querySelector('.shot-thumb').classList.remove('dragging');
+  // Remove all drag-over highlights
+  document.querySelectorAll('.shot-thumb.drag-over').forEach(function(el) { el.classList.remove('drag-over'); });
+  _dragGroup = null;
+  _dragFromIdx = -1;
+}
+
+function onShotDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  var wrap = e.target.closest('.shot-thumb-wrap');
+  if (wrap) {
+    wrap.querySelector('.shot-thumb').classList.add('drag-over');
+  }
+}
+
+function onShotDragLeave(e) {
+  var wrap = e.target.closest('.shot-thumb-wrap');
+  if (wrap) {
+    wrap.querySelector('.shot-thumb').classList.remove('drag-over');
+  }
+}
+
+function onShotDrop(e) {
+  e.preventDefault();
+  var wrap = e.target.closest('.shot-thumb-wrap');
+  if (wrap) wrap.querySelector('.shot-thumb').classList.remove('drag-over');
+  if (!_dragGroup) return;
+  var toGroup = wrap ? wrap.getAttribute('data-group') : null;
+  var toIdx = wrap ? parseInt(wrap.getAttribute('data-index')) : -1;
+  if (toIdx < 0 || _dragGroup !== toGroup || _dragFromIdx === toIdx) return;
+
+  var group = getGroupByName(_dragGroup);
+  if (!group) return;
+  // Move image from _dragFromIdx to toIdx
+  var moved = group.images.splice(_dragFromIdx, 1)[0];
+  group.images.splice(toIdx, 0, moved);
+  saveShotData();
+  renderShotGroups();
+  toast("已调整顺序");
+}
+
+// ========== Backend Sync ==========
+var BACKEND_URL = localStorage.getItem("wxchat_backend_url") || "";
+
+function onBackendUrlChange() {
+  BACKEND_URL = document.getElementById("backendUrl").value.trim();
+  if (BACKEND_URL) {
+    localStorage.setItem("wxchat_backend_url", BACKEND_URL);
+  } else {
+    localStorage.removeItem("wxchat_backend_url");
+  }
+}
+
+function syncToBackend() {
+  if (!BACKEND_URL) { toast("请先设置后端地址"); return; }
+  var btn = document.querySelector(".topbar .tb-btn:last-child");
+  var origText = btn.textContent;
+  btn.textContent = "同步中...";
+  btn.disabled = true;
+
+  // Upload all shot groups as base64 images
+  var payload = { groups: shotGroups };
+  fetch(BACKEND_URL.replace(/\/$/, '') + '/api/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    toast("同步成功！其他设备可查看");
+    btn.textContent = origText;
+    btn.disabled = false;
+  })
+  .catch(function(err) {
+    toast("同步失败: " + err.message);
+    btn.textContent = origText;
+    btn.disabled = false;
+  });
+}
+
+function pullFromBackend() {
+  if (!BACKEND_URL) return Promise.resolve();
+  return fetch(BACKEND_URL.replace(/\/$/, '') + '/api/sync', {
+    method: 'GET'
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.groups && data.groups.length) {
+      shotGroups = data.groups;
+      saveShotData();
+      renderShotGroups();
+      fullRefresh();
+    }
+  })
+  .catch(function(err) {
+    console.log("Backend pull skipped:", err.message);
+  });
+}
+
 function renderShotGroups() {
   var el = document.getElementById("shotGroupList");
   if (!el) return;
@@ -1141,17 +1376,25 @@ function renderShotGroups() {
   for (var g = 0; g < shotGroups.length; g++) {
     var group = shotGroups[g];
     var isActive = activeShotGroup === group.name;
-    html += '<div class="shot-group">';
+    html += '<div class="shot-group" data-group="' + escAttr(group.name) + '">';
     html += '<div class="shot-group-header">';
-    html += '<span class="shot-group-name' + (isActive ? ' group-active' : '') + '" onclick="setActiveGroup(\'' + escAttr(group.name) + '\');uploadScreenshots(\'' + escAttr(group.name) + '\')" title="点击上传到该分组">' + escHtml(group.name) + ' (' + group.images.length + '张)</span>';
-    html += '<button class="shot-group-del" onclick="event.stopPropagation();deleteShotGroup(\'' + escAttr(group.name) + '\')" title="删除分组">&times;</button>';
-    html += '</div><div class="shot-thumbs">';
+    html += '<span class="shot-group-name' + (isActive ? ' group-active' : '') + '" onclick="setActiveGroup('' + escAttr(group.name) + '');uploadScreenshots('' + escAttr(group.name) + '')" title="点击上传到该分组">' + escHtml(group.name) + ' (' + group.images.length + '个)</span>';
+    html += '<button class="shot-group-del" onclick="event.stopPropagation();deleteShotGroup('' + escAttr(group.name) + '')" title="删除分组">&times;</button>';
+    html += '</div><div class="shot-thumbs" data-group="' + escAttr(group.name) + '">';
     for (var k = 0; k < group.images.length; k++) {
       var img = group.images[k];
       var sel = shotCurrent === img.id ? ' thumb-sel' : '';
-      html += '<img src="' + img.data + '" class="shot-thumb' + sel + '" onclick="event.stopPropagation();selectShotImage(\'' + img.id + '\')" title="' + escHtml(img.name) + '">';
+      var isHtmlType = img.type === 'html';
+      html += '<div class="shot-thumb-wrap" draggable="true" data-img-id="' + img.id + '" data-group="' + escAttr(group.name) + '" data-index="' + k + '" ondragstart="onShotDragStart(event)" ondragend="onShotDragEnd(event)" ondragover="onShotDragOver(event)" ondragleave="onShotDragLeave(event)" ondrop="onShotDrop(event)">';
+      if (isHtmlType) {
+        html += '<div class="shot-thumb html-thumb' + sel + '" onclick="event.stopPropagation();selectShotImage('' + img.id + '')" title="' + escHtml(img.name) + ' (HTML)">&#x1f4c4;</div>';
+      } else {
+        html += '<img src="' + img.data + '" class="shot-thumb' + sel + '" onclick="event.stopPropagation();selectShotImage('' + img.id + '')" title="' + escHtml(img.name) + '">';
+      }
+      html += '<button class="shot-thumb-delete" onclick="event.stopPropagation();event.preventDefault();deleteShotImage('' + img.id + '')" title="删除">&times;</button>';
+      html += '</div>';
     }
-    if (!group.images.length) html += '<span class="shot-empty">暂无图片，点击分组名上传</span>';
+    if (!group.images.length) html += '<span class="shot-empty">暂无，点击分组名上传图片或HTML</span>';
     html += '</div></div>';
   }
   el.innerHTML = html;
@@ -1173,20 +1416,32 @@ function showShotInPhone(id) {
   if (!img) return;
   var area = document.getElementById("chatArea");
   area.classList.add("shot-active");
-  // Viewport container: the image scrolls up inside it
-  area.innerHTML = '<div class="shot-viewport" id="shotViewport"><img src="' + img.data + '" class="shot-img-scroll" id="shotImg" style="transform:translateY(0);"></div>';
-  var simg = document.getElementById("shotImg");
-  // After image loads, ensure dimensions are available and apply scroll
-  simg.onload = function() {
-    // Force layout so clientHeight is non-zero
-    simg.style.display = 'block';
-    updateShotScroll();
-  };
-  // Also try after a short delay (for cached/data URI images where onload may fire before we attach)
-  if (simg.complete && simg.naturalHeight > 0) {
-    updateShotScroll();
+  if (img.type === 'html') {
+    // Render HTML chat content directly
+    var htmlContent = img.data || '';
+    // Extract body content if it's a full HTML document
+    var bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+    if (bodyMatch) {
+      htmlContent = bodyMatch[1];
+    }
+    area.innerHTML = '<div class="shot-viewport" id="shotViewport"><div class="html-chat-content" id="shotHtmlContent" style="padding:10px;background:#ededed;min-height:100%;">' + htmlContent + '</div></div>';
+    setTimeout(function() { updateShotScroll(); }, 400);
+  } else {
+    // Image mode
+    var src = img.data || '';
+    area.innerHTML = '<div class="shot-viewport" id="shotViewport"><img src="' + src + '" class="shot-img-scroll" id="shotImg" style="transform:translateY(0);"></div>';
+    var simg = document.getElementById("shotImg");
+    if (simg) {
+      simg.onload = function() {
+        simg.style.display = 'block';
+        updateShotScroll();
+      };
+      if (simg.complete && simg.naturalHeight > 0) {
+        updateShotScroll();
+      }
+      setTimeout(function() { updateShotScroll(); }, 300);
+    }
   }
-  setTimeout(function() { updateShotScroll(); }, 300);
 }
 
 function findShotById(id) {
@@ -1200,17 +1455,29 @@ function findShotById(id) {
 
 function updateShotScroll() {
   var simg = document.getElementById("shotImg");
-  if (!simg) return;
+  var shtml = document.getElementById("shotHtmlContent");
   var offset = shotRevealIdx * SHOT_MSG_HEIGHT;
-  var imgH = simg.clientHeight || simg.naturalHeight || 0;
   var chatArea = document.getElementById("chatArea");
   var viewH = chatArea ? chatArea.clientHeight : 400;
-  var maxOffset = Math.max(0, imgH - viewH + 10);
-  if (offset > maxOffset) offset = maxOffset;
-  simg.style.transform = "translateY(-" + offset + "px)";
-  simg.style.transition = "transform 0.25s ease";
-  // Update scroll progress bar and text
-  updateShotProgress(offset, maxOffset);
+  var contentH = 0;
+
+  if (simg) {
+    contentH = simg.clientHeight || simg.naturalHeight || 0;
+    var maxOffset = Math.max(0, contentH - viewH + 10);
+    if (offset > maxOffset) offset = maxOffset;
+    simg.style.transform = "translateY(-" + offset + "px)";
+    simg.style.transition = "transform 0.25s ease";
+  } else if (shtml) {
+    contentH = shtml.scrollHeight || shtml.clientHeight || 0;
+    var maxOffset2 = Math.max(0, contentH - viewH + 10);
+    if (offset > maxOffset2) offset = maxOffset2;
+    shtml.style.transform = "translateY(-" + offset + "px)";
+    shtml.style.transition = "transform 0.25s ease";
+  } else {
+    return;
+  }
+  var maxOff = Math.max(0, contentH - viewH + 10);
+  updateShotProgress(offset, maxOff);
 }
 
 function updateShotProgress(offset, maxOffset) {
@@ -1276,19 +1543,73 @@ function drawAnnotationMarkers() {
   }
 }
 
+// ========== IndexedDB Storage (replaces localStorage for images) ==========
+var DB_NAME = 'wxchat_db';
+var DB_VERSION = 1;
+var _idb = null;
+
+function idbOpen() {
+  return new Promise(function(resolve, reject) {
+    if (_idb) return resolve(_idb);
+    var req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = function(e) {
+      var db = e.target.result;
+      if (!db.objectStoreNames.contains('shots')) {
+        db.createObjectStore('shots', {keyPath: 'key'});
+      }
+      if (!db.objectStoreNames.contains('config')) {
+        db.createObjectStore('config', {keyPath: 'key'});
+      }
+    };
+    req.onsuccess = function(e) { _idb = e.target.result; resolve(_idb); };
+    req.onerror = function(e) { reject(e.target.error); };
+  });
+}
+
+function idbPut(storeName, key, value) {
+  return idbOpen().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).put({key: key, value: value});
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+}
+
+function idbGet(storeName, key) {
+  return idbOpen().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction(storeName, 'readonly');
+      var req = tx.objectStore(storeName).get(key);
+      req.onsuccess = function() { resolve(req.result ? req.result.value : null); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+}
+
 function saveShotData() {
   // Persist current scroll position onto the image object before saving
   if (shotCurrent) {
     var img = findShotById(shotCurrent);
     if (img) img.revealIdx = shotRevealIdx;
   }
-  try { localStorage.setItem("wxchat_shots", JSON.stringify(shotGroups)); } catch(e) {}
+  // Save to IndexedDB (persistent, large capacity)
+  idbPut('shots', 'shotGroups', JSON.parse(JSON.stringify(shotGroups))).catch(function(e) {
+    console.error('IDB save failed:', e);
+  });
 }
+
 function loadShotData() {
-  try {
-    var d = JSON.parse(localStorage.getItem("wxchat_shots") || "[]");
-    if (d.length) shotGroups = d;
-  } catch(e) {}
+  return idbGet('shots', 'shotGroups').then(function(d) {
+    if (d && d.length) {
+      shotGroups = d;
+      // Restore active group if it existed
+      if (activeShotGroup && !getGroupByName(activeShotGroup)) {
+        activeShotGroup = shotGroups.length ? shotGroups[0].name : null;
+      }
+    }
+  });
 }
 
 // Override autoPlay for screenshot mode
@@ -1297,9 +1618,10 @@ autoPlay = function() {
   if (currentMode === "screenshot") {
     if (!shotCurrent) { toast("请先选择一张截图"); return; }
     var simg = document.getElementById("shotImg");
-    if (!simg) return;
+    var shtml = document.getElementById("shotHtmlContent");
+    if (!simg && !shtml) return;
     // Use rendered height; for data URIs naturalHeight may be 0 until onload
-    var imgH = simg.clientHeight || simg.naturalHeight || 0;
+    var imgH = shtml ? (shtml.scrollHeight || shtml.clientHeight || 0) : (simg.clientHeight || simg.naturalHeight || 0);
     // Viewport: use chat area height
     var chatArea = document.getElementById("chatArea");
     var viewH = chatArea ? chatArea.clientHeight : 400;
@@ -1322,9 +1644,44 @@ autoPlay = function() {
 
 // ========== Init ==========
 (function init() {
-  loadShotData();
+  // Restore backend URL if saved
+  var savedBackend = localStorage.getItem("wxchat_backend_url");
+  if (savedBackend) {
+    BACKEND_URL = savedBackend;
+    document.getElementById("backendUrl").value = savedBackend;
+  }
+  // Load shot data from IndexedDB asynchronously
+  loadShotData().then(function() {
+    continueInit();
+  }).catch(function(e) {
+    console.error("IDB load failed, continuing without shot data:", e);
+    continueInit();
+  });
+})();
+
+function continueInit() {
+  // Auto-create default group if none exist
+  if (!shotGroups.length) {
+    shotGroups.push({ name: "默认分组", images: [], annotations: {} });
+    activeShotGroup = "默认分组";
+  }
+  // Restore active group from IndexedDB
+  idbGet('config', 'activeShotGroup').then(function(name) {
+    if (name && getGroupByName(name)) {
+      activeShotGroup = name;
+      if (currentMode === 'screenshot') renderShotGroups();
+    }
+  });
   updateSessionSelect();
   updatePhoneHeader();
+  // Pull from backend if configured (cross-device sync)
+  pullFromBackend().then(function() {
+    // After pulling, re-render everything
+    if (currentMode === 'screenshot') {
+      renderShotGroups();
+      fullRefresh();
+    }
+  });
   // Auto-restore the most recently saved session
   var sessions = getSessions();
   if (sessions.length > 0) {
@@ -1352,7 +1709,7 @@ autoPlay = function() {
     resetPlayback();
     fullRefresh();
   }
-})();
+}
 </script>
 </body>
 </html>
