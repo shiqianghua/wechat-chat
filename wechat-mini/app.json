@@ -1,0 +1,13 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/generator/generator"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#07c160",
+    "navigationBarTitleText": "微信聊天生成器",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#e0e0e0"
+  },
+  "sitemapLocation": "sitemap.json"
+}
