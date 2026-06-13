@@ -1,0 +1,145 @@
+<!-- WeChat Mini Program - Chat Generator -->
+<view class="app">
+  <!-- Top Bar -->
+  <view class="topbar">
+    <picker mode="selector" range="{{sessionNames}}" bindchange="onSessionSelect">
+      <view class="tb-btn">{{currentSessionName || '-- 选择会话 --'}}</view>
+    </picker>
+    <button class="tb-btn" bindtap="saveSession" size="mini">保存</button>
+    <button class="tb-btn" bindtap="newSession" size="mini">+ 新建</button>
+    <button class="tb-btn danger" bindtap="deleteSession" size="mini">删除</button>
+  </view>
+
+  <!-- Mode Switch -->
+  <view class="mode-bar">
+    <button class="mode-btn {{mode==='text'?'active':''}}" bindtap="switchMode" data-mode="text">文字</button>
+    <button class="mode-btn {{mode==='screenshot'?'active':''}}" bindtap="switchMode" data-mode="screenshot">截图</button>
+    <input class="backend-input" placeholder="后端地址" value="{{backendUrl}}" bindinput="onBackendInput" bindblur="onBackendBlur"/>
+    <button class="tb-btn" bindtap="syncBackend" size="mini">同步</button>
+  </view>
+
+  <!-- Main content -->
+  <view class="main-content">
+    <!-- Text Mode: Editor -->
+    <view wx:if="{{mode==='text'}}" class="editor-panel">
+      <view class="form-row"><text class="label">标题</text><input value="{{cfgTitle}}" bindinput="onCfgInput" data-key="cfgTitle"/></view>
+      <view class="form-row"><text class="label">时间</text><input value="{{cfgTime}}" bindinput="onCfgInput" data-key="cfgTime"/></view>
+      <view class="form-row">
+        <text class="label">角色2</text><input value="{{cfgLeftAvatar}}" bindinput="onCfgInput" data-key="cfgLeftAvatar" placeholder="emoji"/>
+        <text class="label">角色1</text><input value="{{cfgRightAvatar}}" bindinput="onCfgInput" data-key="cfgRightAvatar" placeholder="emoji"/>
+      </view>
+      <textarea class="chat-input" value="{{chatInput}}" bindinput="onCfgInput" data-key="chatInput" placeholder="角色1：你好&#10;角色2：你好呀"/>
+      <view class="hint">角色1: 内容 | 角色2: 内容 | time: 时间 | system: 消息 | transfer: 角色 金额</view>
+    </view>
+
+    <!-- Screenshot Mode: Gallery -->
+    <view wx:if="{{mode==='screenshot'}}" class="gallery-panel">
+      <view class="btn-row">
+        <button class="btn" bindtap="uploadToGroup" size="mini">上传截图</button>
+        <button class="btn" bindtap="newGroup" size="mini">+ 新建分组</button>
+      </view>
+      <scroll-view scroll-y class="group-list">
+        <view wx:for="{{shotGroups}}" wx:key="name" class="shot-group">
+          <view class="group-header">
+            <text class="group-name {{activeShotGroup===item.name?'active':''}}" bindtap="setActiveGroup" data-name="{{item.name}}">{{item.name}} ({{item.images.length}}张)</text>
+            <button class="group-del" bindtap="deleteGroup" data-name="{{item.name}}">&times;</button>
+          </view>
+          <view class="shot-thumbs">
+            <view wx:for="{{item.images}}" wx:key="id" class="thumb-wrap">
+              <image src="{{item.data}}" class="shot-thumb {{shotCurrent===item.id?'thumb-sel':''}}" bindtap="selectImage" data-id="{{item.id}}" mode="aspectFill"/>
+              <button class="thumb-del" bindtap="deleteImage" data-id="{{item.id}}">&times;</button>
+            </view>
+            <text wx:if="{{!item.images.length}}" class="empty-hint">暂无图片</text>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+
+    <!-- Phone Frame -->
+    <view class="phone-wrapper">
+      <view class="phone-frame">
+        <view class="status-bar">
+          <text class="carrier">5G</text>
+          <text>{{cfgTime}}</text>
+          <text class="battery">100% 🔋</text>
+        </view>
+        <view class="nav-bar">
+          <text class="back">‹微信</text>
+          <text class="title">{{cfgTitle}}</text>
+          <text class="more">⋮</text>
+        </view>
+
+        <!-- Text chat area -->
+        <scroll-view wx:if="{{mode==='text'}}" scroll-y class="chat-area" scroll-into-view="{{scrollToId}}">
+          <view wx:if="{{visibleMessages.length===0}}" class="empty-msg">点击按钮开始回放</view>
+          <block wx:for="{{visibleMessages}}" wx:key="index">
+            <view wx:if="{{item.type==='time'}}" class="time-divider">{{item.text}}</view>
+            <view wx:elif="{{item.type==='system'}}" class="system-msg">{{item.text}}</view>
+            <view wx:elif="{{item.type==='transfer'}}" class="msg-row {{item.side}}">
+              <view class="avatar">{{item.side==='left'?cfgLeftAvatar:cfgRightAvatar}}</view>
+              <view class="transfer-bubble">
+                <view class="transfer-content">
+                  <view class="transfer-icon">¥</view>
+                  <view><view class="transfer-amount">{{item.amount}}</view><view class="transfer-unit">微信转账</view></view>
+                </view>
+                <view class="transfer-footer">微信转账</view>
+              </view>
+            </view>
+            <view wx:elif="{{item.type==='location'}}" class="msg-row {{item.side}}">
+              <view class="avatar">{{item.side==='left'?cfgLeftAvatar:cfgRightAvatar}}</view>
+              <view class="location-bubble">
+                <view class="location-map">📍</view>
+                <view class="location-addr">{{item.text}}</view>
+              </view>
+            </view>
+            <view wx:else class="msg-row {{item.side}}">
+              <view class="avatar">{{item.side==='left'?cfgLeftAvatar:cfgRightAvatar}}</view>
+              <view class="bubble {{item.side}}">{{item.text}}</view>
+            </view>
+          </block>
+        </scroll-view>
+
+        <!-- Screenshot viewport -->
+        <view wx:if="{{mode==='screenshot'}}"
+              class="shot-viewport"
+              bindtouchstart="onShotTouchStart"
+              bindtouchmove="onShotTouchMove"
+              bindtouchend="onShotTouchEnd">
+          <image wx:if="{{shotImgSrc}}"
+                 src="{{shotImgSrc}}"
+                 class="shot-img"
+                 mode="widthFix"
+                 style="transform: translateY(-{{shotScrollOffset}}px);"/>
+          <view wx:else class="empty-msg">选择一张截图</view>
+        </view>
+
+        <view class="input-bar">
+          <text>○</text><view class="fake-input"></view><text>☺</text><text>+</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- Control Bar -->
+  <view class="control-bar">
+    <view wx:if="{{mode==='text'}}">
+      <button class="ctrl-btn accent" bindtap="autoPlayText">逐条还原</button>
+      <button class="ctrl-btn" bindtap="revealLeft">角色2 · 对方 ({{leftStats}})</button>
+      <button class="ctrl-btn" bindtap="revealRight">角色1 · 我 ({{rightStats}})</button>
+    </view>
+    <view wx:if="{{mode==='screenshot'}}">
+      <view class="step-row"><text>步长</text><slider min="20" max="120" value="{{SHOT_MSG_HEIGHT}}" bindchange="onStepChange"/><text>{{SHOT_MSG_HEIGHT}}px</text></view>
+      <button class="ctrl-btn accent" bindtap="autoPlayShot">回放</button>
+      <button class="ctrl-btn" bindtap="undoShot">消息回退</button>
+    </view>
+    <button class="ctrl-btn danger" bindtap="undoLast">清除上一条</button>
+    <button class="ctrl-btn" bindtap="resetAll">重置回放</button>
+    <progress percent="{{progress}}" stroke-width="6" activeColor="#07c160" backgroundColor="#e0e0e0"/>
+    <text class="progress-text">{{shownCount}} / {{totalCount}}</text>
+  </view>
+
+  <!-- Export button -->
+  <view class="export-bar">
+    <button class="btn-primary" bindtap="exportImage">导出图片</button>
+  </view>
+</view>
