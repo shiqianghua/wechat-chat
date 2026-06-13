@@ -456,6 +456,8 @@ var activeShotGroup = null;    // name of group currently uploading to
 // ========== Mode Switching ==========
 function switchMode(mode) {
   currentMode = mode;
+  // Persist mode so refresh stays on current page
+  try { localStorage.setItem('wxchat_mode', mode); } catch(e) {}
   document.getElementById("modeTextBtn").classList.toggle("active", mode === "text");
   document.getElementById("modeShotBtn").classList.toggle("active", mode === "screenshot");
   var lp = document.querySelector(".left-panel");
@@ -1407,6 +1409,8 @@ function selectShotImage(id) {
   shotRevealIdx = (img && img.revealIdx) ? img.revealIdx : 0;
   renderShotGroups();
   showShotInPhone(id);
+  // Persist selection for page refresh restoration
+  saveShotData();
   // Update progress bar to match restored position
   setTimeout(function() { updateShotScroll(); }, 400);
 }
@@ -1598,6 +1602,32 @@ function saveShotData() {
   idbPut('shots', 'shotGroups', JSON.parse(JSON.stringify(shotGroups))).catch(function(e) {
     console.error('IDB save failed:', e);
   });
+  // Persist current selection for page refresh restoration
+  if (shotCurrent) {
+    idbPut('config', 'lastShotCurrent', shotCurrent).catch(function(){});
+    idbPut('config', 'lastShotRevealIdx', shotRevealIdx).catch(function(){});
+  }
+  // Auto-sync to backend for cross-device sharing (silent, no toast)
+  if (BACKEND_URL) {
+    syncToBackendSilent();
+  }
+}
+
+// Silent sync (no UI feedback) for auto-save
+var _syncTimer = null;
+function syncToBackendSilent() {
+  if (!BACKEND_URL) return;
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(function() {
+    var payload = { groups: shotGroups };
+    fetch(BACKEND_URL.replace(/\/$/, '') + '/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(function(err) {
+      console.log('Auto-sync failed:', err.message);
+    });
+  }, 500);
 }
 
 function loadShotData() {
@@ -1660,6 +1690,12 @@ autoPlay = function() {
 })();
 
 function continueInit() {
+  // Restore saved mode (stay on same page after refresh)
+  var savedMode = null;
+  try { savedMode = localStorage.getItem('wxchat_mode'); } catch(e) {}
+  if (savedMode === 'screenshot' || savedMode === 'text') {
+    currentMode = savedMode;
+  }
   // Auto-create default group if none exist
   if (!shotGroups.length) {
     shotGroups.push({ name: "默认分组", images: [], annotations: {} });
@@ -1672,11 +1708,19 @@ function continueInit() {
       if (currentMode === 'screenshot') renderShotGroups();
     }
   });
+  // Restore last selected image in screenshot mode
+  idbGet('config', 'lastShotCurrent').then(function(imgId) {
+    if (imgId && currentMode === 'screenshot' && findShotById(imgId)) {
+      shotCurrent = imgId;
+      idbGet('config', 'lastShotRevealIdx').then(function(idx) {
+        if (idx !== null && idx !== undefined) shotRevealIdx = parseInt(idx) || 0;
+      });
+    }
+  });
   updateSessionSelect();
   updatePhoneHeader();
   // Pull from backend if configured (cross-device sync)
   pullFromBackend().then(function() {
-    // After pulling, re-render everything
     if (currentMode === 'screenshot') {
       renderShotGroups();
       fullRefresh();
@@ -1708,6 +1752,17 @@ function continueInit() {
   } else {
     resetPlayback();
     fullRefresh();
+  }
+  // Start periodic sync from backend (every 8 seconds for cross-device sync)
+  if (BACKEND_URL) {
+    setInterval(function() {
+      pullFromBackend().then(function() {
+        if (currentMode === 'screenshot') {
+          renderShotGroups();
+          if (shotCurrent) showShotInPhone(shotCurrent);
+        }
+      });
+    }, 8000);
   }
 }
 </script>
