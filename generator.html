@@ -1378,8 +1378,8 @@ function renderShotGroups() {
     var isActive = activeShotGroup === group.name;
     html += '<div class="shot-group" data-group="' + escAttr(group.name) + '">';
     html += '<div class="shot-group-header">';
-    html += '<span class="shot-group-name' + (isActive ? ' group-active' : '') + '" onclick="setActiveGroup('' + escAttr(group.name) + '');uploadScreenshots('' + escAttr(group.name) + '')" title="点击上传到该分组">' + escHtml(group.name) + ' (' + group.images.length + '个)</span>';
-    html += '<button class="shot-group-del" onclick="event.stopPropagation();deleteShotGroup('' + escAttr(group.name) + '')" title="删除分组">&times;</button>';
+    html += '<span class="shot-group-name' + (isActive ? ' group-active' : '') + '" onclick="setActiveGroup(\'' + escAttr(group.name) + '\');uploadScreenshots(\'' + escAttr(group.name) + '\')" title="点击上传到该分组">' + escHtml(group.name) + ' (' + group.images.length + '个)</span>';
+    html += '<button class="shot-group-del" onclick="event.stopPropagation();deleteShotGroup(\'' + escAttr(group.name) + '\')" title="删除分组">&times;</button>';
     html += '</div><div class="shot-thumbs" data-group="' + escAttr(group.name) + '">';
     for (var k = 0; k < group.images.length; k++) {
       var img = group.images[k];
@@ -1387,11 +1387,11 @@ function renderShotGroups() {
       var isHtmlType = img.type === 'html';
       html += '<div class="shot-thumb-wrap" draggable="true" data-img-id="' + img.id + '" data-group="' + escAttr(group.name) + '" data-index="' + k + '" ondragstart="onShotDragStart(event)" ondragend="onShotDragEnd(event)" ondragover="onShotDragOver(event)" ondragleave="onShotDragLeave(event)" ondrop="onShotDrop(event)">';
       if (isHtmlType) {
-        html += '<div class="shot-thumb html-thumb' + sel + '" onclick="event.stopPropagation();selectShotImage('' + img.id + '')" title="' + escHtml(img.name) + ' (HTML)">&#x1f4c4;</div>';
+        html += '<div class="shot-thumb html-thumb' + sel + '" onclick="event.stopPropagation();selectShotImage(\'' + img.id + '\')" title="' + escHtml(img.name) + ' (HTML)">&#x1f4c4;</div>';
       } else {
-        html += '<img src="' + img.data + '" class="shot-thumb' + sel + '" onclick="event.stopPropagation();selectShotImage('' + img.id + '')" title="' + escHtml(img.name) + '">';
+        html += '<img src="' + img.data + '" class="shot-thumb' + sel + '" onclick="event.stopPropagation();selectShotImage(\'' + img.id + '\')" title="' + escHtml(img.name) + '">';
       }
-      html += '<button class="shot-thumb-delete" onclick="event.stopPropagation();event.preventDefault();deleteShotImage('' + img.id + '')" title="删除">&times;</button>';
+      html += '<button class="shot-thumb-delete" onclick="event.stopPropagation();event.preventDefault();deleteShotImage(\'' + img.id + '\')" title="删除">&times;</button>';
       html += '</div>';
     }
     if (!group.images.length) html += '<span class="shot-empty">暂无，点击分组名上传图片或HTML</span>';
