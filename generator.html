@@ -170,6 +170,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .html-chat-content .msg.right .bubble { background: #95ec69; color: #000; }
 .html-chat-content .time { text-align: center; color: #b2b2b2; font-size: 11px; margin: 6px 0; }
 .html-chat-content .system { text-align: center; color: #b2b2b2; font-size: 11px; padding: 4px 10px; background: rgba(0,0,0,0.04); border-radius: 3px; margin: 4px auto; max-width: 200px; }
+/* Bookmark mode */
+.ctrl-btn.bookmark-active { background: #ff9800; color: #fff; border-color: #ff9800; }
+.bookmark-list { width: 100%; max-height: 160px; overflow-y: auto; font-size: 11px; }
+.bookmark-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid #f0f0f0; cursor: pointer; border-radius: 4px; transition: background 0.15s; }
+.bookmark-item:hover { background: #fff3e0; }
+.bookmark-num { background: #ff9800; color: #fff; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+.bookmark-reason { flex: 1; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bookmark-del { color: #ccc; cursor: pointer; font-size: 14px; border: none; background: none; }
+.bookmark-del:hover { color: #e74c3c; }
 .shot-viewport { width: 100%; flex: 1; overflow: hidden; position: relative; }
 .shot-img-scroll { width: 100%; display: block; position: relative; }
 .shot-marker { position: absolute; left: 0; right: 0; height: 2px; z-index: 5; pointer-events: none; }
@@ -419,6 +428,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
       <span class="progress-text" id="progressText">0 / 0</span>
     </div>
+    <button class="ctrl-btn" id="ctrlBookmark" onclick="bookmarkToggle()" style="display:none;" title="标记模式：点击截图添加回放标记">标记模式</button>
+    <div class="bookmark-list" id="bookmarkList" style="display:none;"></div>
   </div>
 </div>
 
@@ -452,6 +463,10 @@ var shotCurrent = null;        // currently displayed image id
 var shotRevealIdx = 0;         // scroll offset in message-heights
 var SHOT_MSG_HEIGHT = 50;      // pixels per WeChat message row
 var activeShotGroup = null;    // name of group currently uploading to
+var _lastSyncTime = 0;          // last server updatedAt timestamp
+var _localDirty = false;        // local changes not yet synced
+var markerMode = false;         // bookmark marker mode active
+var _syncInterval = null;       // periodic sync timer
 
 // ========== Mode Switching ==========
 function switchMode(mode) {
@@ -475,6 +490,8 @@ function switchMode(mode) {
     r2.style.display = "";
     r1.style.display = "";
     undo.textContent = "清除上一条";
+      document.getElementById("ctrlBookmark").style.display = "none";
+      document.getElementById("bookmarkList").style.display = "none";
   } else {
     lp.classList.add("shot-mode");
     document.getElementById("ctrlReplay").textContent = "回放";
@@ -483,6 +500,7 @@ function switchMode(mode) {
     r2.style.display = "none";
     r1.style.display = "none";
     undo.textContent = "消息回退";
+    document.getElementById("ctrlBookmark").style.display = "";
     if (!document.getElementById("shotUploadSection")) initShotMode();
   }
   fullRefresh();
@@ -1016,14 +1034,122 @@ document.addEventListener("keydown", function(e) {
 
 // Annotation: click on screenshot to add markers
 document.getElementById("chatArea").addEventListener("click", function(e) {
-  if (currentMode === "screenshot" && shotCurrent && annotateMode) {
-    annotateShot(e);
+  if (currentMode === "screenshot" && shotCurrent) {
+    if (markerMode) {
+      addBookmark(e);
+    } else if (annotateMode) {
+      annotateShot(e);
+    }
   }
 });
 var annotateMode = false;
 function annotateModeToggle() {
   annotateMode = !annotateMode;
+  if (annotateMode && markerMode) { bookmarkToggle(); }
   toast(annotateMode ? "标注模式: 点击截图添加消息分割线" : "标注模式已关闭");
+}
+
+// ========== Bookmark/Marker System ==========
+function bookmarkToggle() {
+  if (!shotCurrent) { toast("请先选择一张截图"); return; }
+  markerMode = !markerMode;
+  var btn = document.getElementById("ctrlBookmark");
+  if (markerMode) {
+    btn.classList.add("bookmark-active");
+    btn.textContent = "标记模式: ON";
+    if (annotateMode) annotateModeToggle();
+    document.getElementById("bookmarkList").style.display = "";
+    toast("点击截图添加回放标记，会提示输入原因");
+  } else {
+    btn.classList.remove("bookmark-active");
+    btn.textContent = "标记模式";
+    if (document.getElementById("bookmarkList").childElementCount === 0) {
+      document.getElementById("bookmarkList").style.display = "none";
+    }
+  }
+}
+
+function addBookmark(e) {
+  if (currentMode !== "screenshot" || !shotCurrent || !markerMode) return;
+  var simg = document.getElementById("shotImg");
+  var shtml = document.getElementById("shotHtmlContent");
+  if (!simg && !shtml) return;
+
+  // Calculate which message-height index was clicked
+  var viewport = document.getElementById("shotViewport");
+  var rect = viewport.getBoundingClientRect();
+  var clickY = e.clientY - rect.top;
+  var currentOffset = shotRevealIdx * SHOT_MSG_HEIGHT;
+  var clickedOffset = currentOffset + clickY;
+  var clickedIdx = Math.floor(clickedOffset / SHOT_MSG_HEIGHT);
+
+  // Prompt for reason
+  var reason = prompt("标记原因（可选）:", "第 " + clickedIdx + " 步");
+  if (reason === null) return; // cancelled
+  if (!reason.trim()) reason = "标记 " + clickedIdx;
+
+  // Save bookmark
+  var img = findShotById(shotCurrent);
+  if (!img) return;
+  if (!img.bookmarks) img.bookmarks = [];
+  img.bookmarks.push({
+    idx: clickedIdx,
+    reason: reason.trim(),
+    createdAt: Date.now()
+  });
+  img.bookmarks.sort(function(a, b) { return a.idx - b.idx; });
+
+  saveShotData();
+  renderBookmarks();
+  toast("已标记: " + reason.trim());
+}
+
+function deleteBookmark(bmIdx) {
+  if (!shotCurrent) return;
+  var img = findShotById(shotCurrent);
+  if (!img || !img.bookmarks) return;
+  img.bookmarks.splice(bmIdx, 1);
+  if (!img.bookmarks.length) img.bookmarks = undefined;
+  saveShotData();
+  renderBookmarks();
+}
+
+function jumpToBookmark(idx) {
+  shotRevealIdx = idx;
+  updateShotScroll();
+  autoSave();
+  // Highlight briefly
+  var flash = document.getElementById("shotViewport");
+  if (flash) {
+    flash.style.boxShadow = "inset 0 0 20px rgba(255,152,0,0.6)";
+    setTimeout(function() { flash.style.boxShadow = ""; }, 800);
+  }
+}
+
+function renderBookmarks() {
+  var list = document.getElementById("bookmarkList");
+  if (!list) return;
+  var img = shotCurrent ? findShotById(shotCurrent) : null;
+  if (!img || !img.bookmarks || !img.bookmarks.length) {
+    list.innerHTML = "";
+    list.style.display = "none";
+    if (!markerMode) {
+      document.getElementById("ctrlBookmark").classList.remove("bookmark-active");
+      document.getElementById("ctrlBookmark").textContent = "标记模式";
+    }
+    return;
+  }
+  list.style.display = "";
+  var html = "";
+  for (var b = 0; b < img.bookmarks.length; b++) {
+    var bm = img.bookmarks[b];
+    html += '<div class="bookmark-item" onclick="jumpToBookmark(' + bm.idx + ')" title="点击跳转到此标记">';
+    html += '<span class="bookmark-num">' + (b + 1) + '</span>';
+    html += '<span class="bookmark-reason">' + escHtml(bm.reason) + ' (' + escHtml(bm.idx + '步') + ')</span>';
+    html += '<button class="bookmark-del" onclick="event.stopPropagation();deleteBookmark(' + b + ')">&times;</button>';
+    html += '</div>';
+  }
+  list.innerHTML = html;
 }
 
 // ========== Export / Import ==========
@@ -1332,7 +1458,7 @@ function syncToBackend() {
   btn.textContent = "同步中...";
   btn.disabled = true;
 
-  // Upload all shot groups as base64 images
+  // Upload all shot groups
   var payload = { groups: shotGroups };
   fetch(BACKEND_URL.replace(/\/$/, '') + '/api/sync', {
     method: 'POST',
@@ -1341,7 +1467,13 @@ function syncToBackend() {
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    toast("同步成功！其他设备可查看");
+    if (data.ok) {
+      _lastSyncTime = data.updatedAt || Date.now() / 1000;
+      _localDirty = false;
+      toast("同步成功！其他设备可查看");
+    } else {
+      toast("同步失败: " + (data.error || '未知错误'));
+    }
     btn.textContent = origText;
     btn.disabled = false;
   })
@@ -1354,20 +1486,43 @@ function syncToBackend() {
 
 function pullFromBackend() {
   if (!BACKEND_URL) return Promise.resolve();
+  // Skip pull if we have unsaved local changes
+  if (_localDirty) {
+    console.log('Pull skipped: local changes pending sync');
+    return Promise.resolve();
+  }
   return fetch(BACKEND_URL.replace(/\/$/, '') + '/api/sync', {
     method: 'GET'
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    if (data.groups && data.groups.length) {
-      shotGroups = data.groups;
-      saveShotData();
-      renderShotGroups();
-      fullRefresh();
+    if (data.groups && data.groups.length && data.updatedAt) {
+      // Only update if server data is newer than our last sync
+      if (data.updatedAt > _lastSyncTime) {
+        // Merge: preserve local playback positions
+        var serverGroups = data.groups;
+        for (var sg = 0; sg < serverGroups.length; sg++) {
+          var sg2 = serverGroups[sg];
+          for (var si = 0; si < sg2.images.length; si++) {
+            // Try to find matching image in local groups and preserve revealIdx
+            var localImg = findShotById(sg2.images[si].id);
+            if (localImg && localImg.revealIdx !== undefined) {
+              sg2.images[si].revealIdx = localImg.revealIdx;
+            }
+          }
+        }
+        shotGroups = serverGroups;
+        _lastSyncTime = data.updatedAt;
+        saveShotData();
+        renderShotGroups();
+        if (shotCurrent) showShotInPhone(shotCurrent);
+        else fullRefresh();
+        console.log('Pull: updated from server, time=' + data.updatedAt);
+      }
     }
   })
   .catch(function(err) {
-    console.log("Backend pull skipped:", err.message);
+    console.log('Backend pull skipped:', err.message);
   });
 }
 
@@ -1409,6 +1564,8 @@ function selectShotImage(id) {
   shotRevealIdx = (img && img.revealIdx) ? img.revealIdx : 0;
   renderShotGroups();
   showShotInPhone(id);
+  // Render bookmarks for this image
+  setTimeout(function() { renderBookmarks(); }, 500);
   // Persist selection for page refresh restoration
   saveShotData();
   // Update progress bar to match restored position
@@ -1617,6 +1774,7 @@ function saveShotData() {
 var _syncTimer = null;
 function syncToBackendSilent() {
   if (!BACKEND_URL) return;
+  _localDirty = true;
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(function() {
     var payload = { groups: shotGroups };
@@ -1624,6 +1782,13 @@ function syncToBackendSilent() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
+    }).then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        _lastSyncTime = data.updatedAt || Date.now() / 1000;
+        _localDirty = false;
+        console.log('Sync OK, time=' + _lastSyncTime);
+      }
     }).catch(function(err) {
       console.log('Auto-sync failed:', err.message);
     });
@@ -1719,50 +1884,43 @@ function continueInit() {
   });
   updateSessionSelect();
   updatePhoneHeader();
-  // Pull from backend if configured (cross-device sync)
+  // Pull from backend if configured, then restore session
   pullFromBackend().then(function() {
-    if (currentMode === 'screenshot') {
-      renderShotGroups();
-      fullRefresh();
-    }
-  });
-  // Auto-restore the most recently saved session
-  var sessions = getSessions();
-  if (sessions.length > 0) {
-    sessions.sort(function(a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
-    var last = sessions[0];
-    currentSessionId = last.id;
-    document.getElementById("cfgTitle").value = last.config.title || "微信聊天";
-    document.getElementById("cfgTime").value = last.config.time || "14:30";
-    document.getElementById("cfgLeftAvatar").value = last.config.leftAvatar || "";
-    document.getElementById("cfgRightAvatar").value = last.config.rightAvatar || "";
-    document.getElementById("chatInput").value = last.content || "";
-    messages = parseChat(last.content || "");
-    if (last.revealOrder && last.revealOrder.length === messages.length) {
-      revealOrder = last.revealOrder.slice();
-      revealCounter = last.revealCounter || 0;
+    // After pull, restore the most recently saved session
+    var sessions = getSessions();
+    if (sessions.length > 0) {
+      sessions.sort(function(a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+      var last = sessions[0];
+      currentSessionId = last.id;
+      document.getElementById("cfgTitle").value = last.config.title || "微信聊天";
+      document.getElementById("cfgTime").value = last.config.time || "14:30";
+      document.getElementById("cfgLeftAvatar").value = last.config.leftAvatar || "";
+      document.getElementById("cfgRightAvatar").value = last.config.rightAvatar || "";
+      document.getElementById("chatInput").value = last.content || "";
+      messages = parseChat(last.content || "");
+      if (last.revealOrder && last.revealOrder.length === messages.length) {
+        revealOrder = last.revealOrder.slice();
+        revealCounter = last.revealCounter || 0;
+      } else {
+        revealOrder = new Array(messages.length);
+        for (var i = 0; i < revealOrder.length; i++) revealOrder[i] = 0;
+        revealCounter = 0;
+      }
+      isPlaying = true;
+      updateSessionSelect();
     } else {
-      revealOrder = new Array(messages.length);
-      for (var i = 0; i < revealOrder.length; i++) revealOrder[i] = 0;
-      revealCounter = 0;
+      resetPlayback();
     }
-    isPlaying = true;
-    updateSessionSelect();
+    // Single fullRefresh after everything is loaded
     fullRefresh();
-  } else {
-    resetPlayback();
-    fullRefresh();
-  }
-  // Start periodic sync from backend (every 8 seconds for cross-device sync)
-  if (BACKEND_URL) {
-    setInterval(function() {
-      pullFromBackend().then(function() {
-        if (currentMode === 'screenshot') {
-          renderShotGroups();
-          if (shotCurrent) showShotInPhone(shotCurrent);
-        }
-      });
-    }, 8000);
+  });
+  // Start periodic sync from backend (every 10 seconds)
+  if (BACKEND_URL && !_syncInterval) {
+    _syncInterval = setInterval(function() {
+      if (!_localDirty) {
+        pullFromBackend();
+      }
+    }, 10000);
   }
 }
 </script>
