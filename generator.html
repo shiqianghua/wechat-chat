@@ -475,6 +475,7 @@ var _lastSyncTime = 0;          // last server updatedAt timestamp
 var _localDirty = false;        // local changes not yet synced
 var markerMode = false;         // bookmark marker mode active
 var _syncInterval = null;       // periodic sync timer
+var _useBackend = false;         // whether backend is available for storage
 
 // ========== Mode Switching ==========
 function switchMode(mode) {
@@ -510,6 +511,8 @@ function switchMode(mode) {
     undo.textContent = "消息回退";
     document.getElementById("ctrlBookmark").style.display = "";
     if (!document.getElementById("shotUploadSection")) initShotMode();
+    // Initialize draggable progress bar
+    setTimeout(function() { initProgressBarDrag(); }, 600);
   }
   fullRefresh();
 }
@@ -694,6 +697,13 @@ function parseChat(text) {
 // ========== Playback ==========
 function resetPlayback() {
   isPlaying = true;
+  // Reset screenshot scroll state
+  if (currentMode === "screenshot") {
+    shotRevealIdx = 0;
+    updateShotScroll();
+    autoSave();
+    return;
+  }
   messages = parseChat(document.getElementById("chatInput").value);
   revealOrder = new Array(messages.length);
   for (var i = 0; i < revealOrder.length; i++) revealOrder[i] = 0;
@@ -1367,7 +1377,25 @@ function getGroupByName(name) {
 
 function uploadToActiveGroup() {
   if (!activeShotGroup) { toast("请先选择一个分组"); return; }
-  uploadScreenshots(activeShotGroup);
+  // If backend is configured, verify it's reachable first
+  if (BACKEND_URL) {
+    fetch(BACKEND_URL.replace(/\/$/, '') + '/api/health')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) {
+          _useBackend = true;
+          toast("后端已连接，图片将永久保存到服务器");
+        }
+        uploadScreenshots(activeShotGroup);
+      })
+      .catch(function() {
+        _useBackend = false;
+        toast("后端未连接，使用本地存储（可能被浏览器清理）");
+        uploadScreenshots(activeShotGroup);
+      });
+  } else {
+    uploadScreenshots(activeShotGroup);
+  }
 }
 
 function uploadScreenshots(groupName) {
@@ -1747,6 +1775,59 @@ function updateShotProgress(offset, maxOffset) {
   updateBookmarkHighlight();
 }
 
+// ========== Draggable Progress Bar ==========
+function initProgressBarDrag() {
+  var bar = document.getElementById("progressBarContainer");
+  if (!bar) return;
+  bar.style.cursor = "pointer";
+  
+  bar.onmousedown = function(e) {
+    e.preventDefault();
+    scrubToPosition(e);
+    
+    function onMove(ev) { ev.preventDefault(); scrubToPosition(ev); }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+  
+  bar.addEventListener("touchstart", function(e) {
+    e.preventDefault();
+    scrubToPosition(e.touches[0]);
+    
+    function onMoveT(ev) { ev.preventDefault(); scrubToPosition(ev.touches[0]); }
+    function onEndT() {
+      document.removeEventListener("touchmove", onMoveT);
+      document.removeEventListener("touchend", onEndT);
+    }
+    document.addEventListener("touchmove", onMoveT);
+    document.addEventListener("touchend", onEndT);
+  });
+}
+
+function scrubToPosition(e) {
+  if (currentMode !== "screenshot" || !shotCurrent) return;
+  var bar = document.getElementById("progressBarContainer");
+  if (!bar) return;
+  var simg = document.getElementById("shotImg");
+  var shtml = document.getElementById("shotHtmlContent");
+  var chatArea = document.getElementById("chatArea");
+  var viewH = chatArea ? chatArea.clientHeight : 400;
+  var contentH = simg ? (simg.clientHeight || simg.naturalHeight || 0) : (shtml ? (shtml.scrollHeight || shtml.clientHeight || 0) : 0);
+  var maxOffset = Math.max(0, contentH - viewH + 10);
+  if (maxOffset <= 0) return;
+  
+  var rect = bar.getBoundingClientRect();
+  var x = e.clientX - rect.left;
+  var pct = Math.max(0, Math.min(1, x / rect.width));
+  shotRevealIdx = Math.round((pct * maxOffset) / SHOT_MSG_HEIGHT);
+  updateShotScroll();
+  autoSave();
+}
+
 // Adjust message height from control panel
 function setMsgHeight(h) {
   SHOT_MSG_HEIGHT = Math.max(20, Math.min(150, parseInt(h) || 50));
@@ -1851,7 +1932,7 @@ function saveShotData() {
     var img = findShotById(shotCurrent);
     if (img) img.revealIdx = shotRevealIdx;
   }
-  // Save to IndexedDB (persistent, large capacity)
+  // Always save to IndexedDB as local cache
   idbPut('shots', 'shotGroups', JSON.parse(JSON.stringify(shotGroups))).catch(function(e) {
     console.error('IDB save failed:', e);
   });
@@ -1860,9 +1941,10 @@ function saveShotData() {
     idbPut('config', 'lastShotCurrent', shotCurrent).catch(function(){});
     idbPut('config', 'lastShotRevealIdx', shotRevealIdx).catch(function(){});
   }
-  // Auto-sync to backend for cross-device sharing (silent, no toast)
+  // If backend is configured, save to backend as PRIMARY storage
   if (BACKEND_URL) {
     syncToBackendSilent();
+    _useBackend = true;
   }
 }
 
@@ -1957,6 +2039,16 @@ function continueInit() {
   if (savedMode === 'screenshot' || savedMode === 'text') {
     currentMode = savedMode;
   }
+  // If backend is configured, pull data from backend FIRST (primary storage)
+  // IndexedDB is used as local cache fallback
+  if (BACKEND_URL) {
+    fetch(BACKEND_URL.replace(/\/$/, '') + '/api/health')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) { _useBackend = true; }
+      })
+      .catch(function() { _useBackend = false; });
+  }
   // Auto-create default group if none exist
   if (!shotGroups.length) {
     shotGroups.push({ name: "默认分组", images: [], annotations: {} });
@@ -2009,6 +2101,10 @@ function continueInit() {
     }
     // Single fullRefresh after everything is loaded
     fullRefresh();
+    // Init progress bar drag if in screenshot mode
+    if (currentMode === 'screenshot') {
+      setTimeout(function() { initProgressBarDrag(); }, 800);
+    }
   });
   // Start periodic sync from backend (every 10 seconds)
   if (BACKEND_URL && !_syncInterval) {
