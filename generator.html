@@ -188,11 +188,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ping
 .msg-height-adj input { flex: 1; }
 
 /* Progress */
-.progress-wrap { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 340px; }
-.progress-bar { flex: 1; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; }
-.progress-fill { height: 100%; background: #07c160; border-radius: 3px; transition: width 0.2s; width: 0%; }
+.progress-wrap { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 340px; margin: 12px 0; padding: 8px 6px; background: #f8f8f8; border-radius: 8px; border: 1px solid #eee; }
+.progress-wrap .progress-bar { flex: 1; height: 10px; background: #e0e0e0; border-radius: 5px; overflow: visible; cursor: pointer; }
+/* Progress bar - more height for easier clicking, separated from buttons */
+.ctrl-spacer { height: 6px; width: 100%; }
+.progress-fill { height: 100%; background: #07c160; border-radius: 5px; transition: width 0.2s; width: 0%; }
+/* Progress bar separate from buttons */
+.progress-wrap .progress-text { font-size: 12px; color: #666; white-space: nowrap; min-width: 55px; text-align: center; font-weight: 500; }
 /* Progress bar bookmark dots */
-.progress-bar { position: relative; }
+.progress-bar { position: relative; flex: 1; height: 10px; background: #e0e0e0; border-radius: 5px; overflow: visible; cursor: pointer; }
 .bm-dot { position: absolute; top: -3px; width: 12px; height: 12px; background: #ff9800; border: 2px solid #fff; border-radius: 50%; cursor: pointer; z-index: 3; transform: translateX(-50%); box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform 0.15s; }
 .bm-dot:hover { transform: translateX(-50%) scale(1.5); z-index: 5; }
 .bm-dot.current { background: #e74c3c; border-color: #ff9800; animation: bm-pulse 1s infinite; }
@@ -1122,6 +1126,19 @@ function addBookmark(e) {
   toast("已标记: " + reason.trim());
 }
 
+function editBookmarkReason(bmIdx) {
+  if (!shotCurrent) return;
+  var img = findShotById(shotCurrent);
+  if (!img || !img.bookmarks || !img.bookmarks[bmIdx]) return;
+  var bm = img.bookmarks[bmIdx];
+  var newReason = prompt("编辑标记说明：", bm.reason);
+  if (newReason === null || newReason.trim() === "") return; // cancelled or empty
+  bm.reason = newReason.trim();
+  saveShotData();
+  renderBookmarks();
+  toast("标记已更新: " + bm.reason);
+}
+
 function deleteBookmark(bmIdx) {
   if (!shotCurrent) return;
   var img = findShotById(shotCurrent);
@@ -1135,6 +1152,10 @@ function deleteBookmark(bmIdx) {
 function jumpToBookmark(idx) {
   shotRevealIdx = idx;
   updateShotScroll();
+  // Save scroll state + bookmarks permanently
+  var img = findShotById(shotCurrent);
+  if (img) img.revealIdx = shotRevealIdx;
+  saveShotData();
   autoSave();
   // Highlight the target dot
   var bar = document.getElementById("progressBarContainer");
@@ -1223,13 +1244,40 @@ function renderBookmarks() {
     var html = "";
     for (var b2 = 0; b2 < img.bookmarks.length; b2++) {
       var bm2 = img.bookmarks[b2];
-      html += '<div class="bookmark-item" onclick="jumpToBookmark(' + bm2.idx + ')" title="点击跳转到此标记">';
+      html += '<div class="bookmark-item" onclick="jumpToBookmark(' + bm2.idx + ')" data-bm-idx="' + b2 + '" title="点击跳转 | 长按编辑">';
       html += '<span class="bookmark-num">' + (b2 + 1) + '</span>';
-      html += '<span class="bookmark-reason">' + escHtml(bm2.reason) + ' (' + bm2.idx + '步)</span>';
+      html += '<span class="bookmark-reason" id="bm-reason-' + b2 + '">' + escHtml(bm2.reason) + ' (' + bm2.idx + '步)</span>';
       html += '<button class="bookmark-del" onclick="event.stopPropagation();deleteBookmark(' + b2 + ')">&times;</button>';
       html += '</div>';
     }
     list.innerHTML = html;
+    // Attach long-press handlers (600ms hold to edit)
+    var items = list.querySelectorAll('.bookmark-item');
+    for (var bi = 0; bi < items.length; bi++) {
+      (function(item, idx) {
+        var pressTimer = null;
+        var isLongPress = false;
+        item.addEventListener('mousedown', function(e) {
+          if (e.button !== 0) return;
+          isLongPress = false;
+          pressTimer = setTimeout(function() {
+            isLongPress = true;
+            editBookmarkReason(idx);
+          }, 600);
+        });
+        item.addEventListener('mouseup', function() { clearTimeout(pressTimer); });
+        item.addEventListener('mouseleave', function() { clearTimeout(pressTimer); });
+        item.addEventListener('touchstart', function(e) {
+          isLongPress = false;
+          pressTimer = setTimeout(function() {
+            isLongPress = true;
+            editBookmarkReason(idx);
+          }, 600);
+        }, {passive: true});
+        item.addEventListener('touchend', function() { clearTimeout(pressTimer); });
+        item.addEventListener('touchmove', function() { clearTimeout(pressTimer); });
+      })(items[bi], bi);
+    }
   }
 
   // Highlight current bookmark (closest to current position)
@@ -1688,7 +1736,9 @@ function selectShotImage(id) {
   showShotInPhone(id);
   // Render bookmarks for this image
   setTimeout(function() { renderBookmarks(); }, 500);
-  // Persist selection for page refresh restoration
+  // Persist selection + playback state + bookmarks for permanent restoration
+  var img2 = findShotById(id);
+  if (img2) img2.revealIdx = shotRevealIdx;
   saveShotData();
   // Update progress bar to match restored position
   setTimeout(function() { updateShotScroll(); }, 400);
