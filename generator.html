@@ -1469,7 +1469,7 @@ function uploadScreenshots(groupName) {
               data: e.target.result
             });
             loaded++;
-            if (loaded === files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 个到 " + groupName); }
+            if (loaded >= files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 个到 " + groupName); }
           };
           htmlReader.readAsText(file);
         } else if (BACKEND_URL) {
@@ -1481,13 +1481,13 @@ function uploadScreenshots(groupName) {
               fallbackReader.onload = function(ev) {
                 group.images.push({ id: "img_" + Date.now() + "_" + Math.random().toString(36).slice(2,6), name: file.name, type: "image", data: ev.target.result });
                 loaded++;
-                if (loaded === files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 个到 " + groupName + " (本地存储)"); }
+                if (loaded >= files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 个到 " + groupName + " (本地存储)"); }
               };
               fallbackReader.readAsDataURL(file);
             } else {
               group.images.push({ id: "img_" + Date.now() + "_" + Math.random().toString(36).slice(2,6), name: file.name, type: "image", data: url, isUrl: true });
               loaded++;
-              if (loaded === files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 个到 " + groupName + " (已上传服务器)"); }
+              if (loaded >= files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 个到 " + groupName + " (已上传服务器)"); }
             }
           });
         } else {
@@ -1496,7 +1496,7 @@ function uploadScreenshots(groupName) {
           reader.onload = function(e) {
             group.images.push({ id: "img_" + Date.now() + "_" + Math.random().toString(36).slice(2,6), name: file.name, type: "image", data: e.target.result });
             loaded++;
-            if (loaded === files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 张到 " + groupName); }
+            if (loaded >= files.length) { saveShotData(); renderShotGroups(); toast("已添加 " + files.length + " 张到 " + groupName); }
           };
           reader.readAsDataURL(file);
         }
@@ -1980,7 +1980,11 @@ function saveShotData() {
   // Persist current scroll position onto the image object before saving
   if (shotCurrent) {
     var img = findShotById(shotCurrent);
-    if (img) img.revealIdx = shotRevealIdx;
+    if (img) {
+      img.revealIdx = shotRevealIdx;
+      // Ensure bookmarks array exists so it serializes properly
+      if (img.bookmarks && !img.bookmarks.length) img.bookmarks = undefined;
+    }
   }
   // Always save to IndexedDB as local cache
   idbPut('shots', 'shotGroups', JSON.parse(JSON.stringify(shotGroups))).catch(function(e) {
@@ -2088,6 +2092,8 @@ function continueInit() {
   try { savedMode = localStorage.getItem('wxchat_mode'); } catch(e) {}
   if (savedMode === 'screenshot' || savedMode === 'text') {
     currentMode = savedMode;
+    // Ensure DOM reflects restored mode (init screenshot section, show/hide buttons)
+    switchMode(currentMode);
   }
   // If backend is configured, pull data from backend FIRST (primary storage)
   // IndexedDB is used as local cache fallback
@@ -2118,6 +2124,14 @@ function continueInit() {
       idbGet('config', 'lastShotRevealIdx').then(function(idx) {
         if (idx !== null && idx !== undefined) shotRevealIdx = parseInt(idx) || 0;
       });
+        // After restoring scroll, render bookmarks with delay for DOM
+        setTimeout(function() {
+          if (shotCurrent === imgId) {
+            showShotInPhone(imgId);
+            updateShotScroll();
+            renderBookmarks();
+          }
+        }, 600);
     }
   });
   updateSessionSelect();
